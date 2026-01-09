@@ -42,9 +42,10 @@ class SafeCollector<T>(
                     errorHandler?.invoke(e)
                 }
             }
-            completionHandler?.invoke()
         } catch (e: Throwable) {
             errorHandler?.invoke(e)
+        } finally {
+            completionHandler?.invoke()
         }
     }
 

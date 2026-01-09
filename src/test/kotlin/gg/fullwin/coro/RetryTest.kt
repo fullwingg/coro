@@ -133,4 +133,19 @@ class RetryTest : FunSpec({
             attempts shouldBe 2
         }
     }
+
+    test("retry DSL builder without attempt block throws") {
+        runTest {
+            try {
+                val builder: RetryBuilder<String>.() -> Unit = {
+                    times = 3
+                    // No attempt block
+                }
+                retry(builder)
+                throw AssertionError("Should have thrown")
+            } catch (e: IllegalStateException) {
+                e.message shouldBe "No block provided"
+            }
+        }
+    }
 })

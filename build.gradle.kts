@@ -34,7 +34,7 @@ publishing {
             pom {
                 name.set("Coro")
                 description.set("Kotlin coroutine utilities for cleaner async code")
-                url.set("https://github.com/fullwin/coro")
+                url.set("https://github.com/fullwingg/coro")
             }
         }
     }

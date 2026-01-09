@@ -6,7 +6,7 @@ import kotlinx.coroutines.withContext
 
 object CoroDispatchers {
     @Volatile
-    var sync: CoroutineDispatcher = Dispatchers.Main.immediate
+    var sync: CoroutineDispatcher = Dispatchers.Default
         private set
 
     @Volatile

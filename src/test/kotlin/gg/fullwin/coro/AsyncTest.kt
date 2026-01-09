@@ -12,9 +12,15 @@ class AsyncTest : FunSpec({
 
     test("load should return Success for successful operation") {
         runTest {
-            val result = load { 42 }
+            var blockCalled = false
+            val result = load {
+                blockCalled = true
+                42
+            }
+            blockCalled.shouldBeTrue()
             result.shouldBeInstanceOf<Async.Success<Int>>()
             result.getOrNull() shouldBe 42
+            result.isSuccess.shouldBeTrue()
         }
     }
 
@@ -26,12 +32,27 @@ class AsyncTest : FunSpec({
         }
     }
 
+    test("load executes suspend block") {
+        runTest {
+            var counter = 0
+            val result = load {
+                counter++
+                kotlinx.coroutines.delay(1)
+                counter++
+                "done"
+            }
+            counter shouldBe 2
+            result.getOrNull() shouldBe "done"
+        }
+    }
+
     test("Uninitialized state") {
         val state: Async<Int> = Async.Uninitialized
         state.isUninitialized.shouldBeTrue()
         state.isLoading.shouldBeFalse()
         state.isSuccess.shouldBeFalse()
         state.isFailure.shouldBeFalse()
+        // Test isComplete with both isSuccess and isFailure false
         state.isComplete.shouldBeFalse()
         state.getOrNull().shouldBeNull()
     }
@@ -42,6 +63,7 @@ class AsyncTest : FunSpec({
         state.isLoading.shouldBeTrue()
         state.isSuccess.shouldBeFalse()
         state.isFailure.shouldBeFalse()
+        // Test isComplete with both isSuccess and isFailure false
         state.isComplete.shouldBeFalse()
         state.getOrNull().shouldBeNull()
     }
@@ -50,8 +72,10 @@ class AsyncTest : FunSpec({
         val state: Async<Int> = Async.Success(42)
         state.isUninitialized.shouldBeFalse()
         state.isLoading.shouldBeFalse()
+        // Test isSuccess branch first (short-circuit in isComplete)
         state.isSuccess.shouldBeTrue()
         state.isFailure.shouldBeFalse()
+        // Test isComplete when isSuccess is true
         state.isComplete.shouldBeTrue()
         state.getOrNull() shouldBe 42
     }
@@ -61,11 +85,19 @@ class AsyncTest : FunSpec({
         val state: Async<Int> = Async.Failure(error)
         state.isUninitialized.shouldBeFalse()
         state.isLoading.shouldBeFalse()
+        // Test with isSuccess false but isFailure true
         state.isSuccess.shouldBeFalse()
         state.isFailure.shouldBeTrue()
+        // Test isComplete when isFailure is true
         state.isComplete.shouldBeTrue()
         state.getOrNull().shouldBeNull()
         state.errorOrNull() shouldBe error
+    }
+
+    test("errorOrNull returns null for non-Failure states") {
+        (Async.Uninitialized as Async<Int>).errorOrNull().shouldBeNull()
+        (Async.Loading as Async<Int>).errorOrNull().shouldBeNull()
+        Async.Success(42).errorOrNull().shouldBeNull()
     }
 
     test("getOrElse should return value for Success") {
@@ -73,30 +105,48 @@ class AsyncTest : FunSpec({
         state.getOrElse { 0 } shouldBe 10
     }
 
-    test("getOrElse should return default for non-Success") {
+    test("getOrElse should return default for non-Success states") {
         (Async.Loading as Async<Int>).getOrElse { 99 } shouldBe 99
         (Async.Uninitialized as Async<Int>).getOrElse { 99 } shouldBe 99
         (Async.Failure(RuntimeException()) as Async<Int>).getOrElse { 99 } shouldBe 99
     }
 
-    test("map should transform Success value") {
+    test("getOrNull returns null for non-Success states") {
+        val loading: Async<Int> = Async.Loading
+        loading.getOrNull().shouldBeNull()
+
+        val uninitialized: Async<Int> = Async.Uninitialized
+        uninitialized.getOrNull().shouldBeNull()
+
+        val failure: Async<Int> = Async.Failure(RuntimeException())
+        failure.getOrNull().shouldBeNull()
+    }
+
+    test("map transforms Success value") {
         val result = Async.Success(10).map { it * 2 }
+        result.shouldBeInstanceOf<Async.Success<Int>>()
         result.getOrNull() shouldBe 20
     }
 
-    test("map should preserve Loading") {
-        val result = Async.Loading.map { 42 }
-        result.isLoading.shouldBeTrue()
-    }
-
-    test("map should preserve Uninitialized") {
-        val result = Async.Uninitialized.map { 42 }
+    test("map returns Uninitialized for Uninitialized") {
+        val state: Async<Int> = Async.Uninitialized
+        val result = state.map { it * 2 }
+        result.shouldBeInstanceOf<Async.Uninitialized>()
         result.isUninitialized.shouldBeTrue()
     }
 
-    test("map should preserve Failure") {
-        val error = RuntimeException()
-        val result = Async.Failure(error).map { 42 }
+    test("map returns Loading for Loading") {
+        val state: Async<Int> = Async.Loading
+        val result = state.map { it * 2 }
+        result.shouldBeInstanceOf<Async.Loading>()
+        result.isLoading.shouldBeTrue()
+    }
+
+    test("map preserves Failure") {
+        val error = RuntimeException("test error")
+        val state: Async<Int> = Async.Failure(error)
+        val result = state.map { it * 2 }
+        result.shouldBeInstanceOf<Async.Failure>()
         result.isFailure.shouldBeTrue()
         result.errorOrNull() shouldBe error
     }
@@ -195,9 +245,14 @@ class AsyncTest : FunSpec({
         outcome.shouldBeInstanceOf<Outcome.Failure>()
     }
 
-    test("toOutcome returns null for Loading and Uninitialized") {
-        Async.Loading.toOutcome().shouldBeNull()
-        Async.Uninitialized.toOutcome().shouldBeNull()
+    test("toOutcome returns null for Loading") {
+        val async: Async<Int> = Async.Loading
+        async.toOutcome().shouldBeNull()
+    }
+
+    test("toOutcome returns null for Uninitialized") {
+        val async: Async<Int> = Async.Uninitialized
+        async.toOutcome().shouldBeNull()
     }
 
     test("companion factory methods") {
