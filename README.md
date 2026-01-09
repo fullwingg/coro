@@ -70,10 +70,27 @@ state
     .onSuccess { showUser(it) }
     .onFailure { showError(it) }
 
+// Check state
+if (state.isLoading) { }
+if (state.isSuccess) { }
+if (state.isFailure) { }
+if (state.isComplete) { }  // Success or Failure
+
 // Transform and extract
 state.map { it.name }
-state.getOrNull()
+state.getOrNull()            // T?
 state.getOrElse { defaultUser }
+state.errorOrNull()          // Throwable? (only for Failure)
+
+// Factory methods
+Async.success(user)
+Async.failure(error)
+Async.loading()
+Async.uninitialized()
+
+// Conversions
+val async = outcome.toAsync()    // Outcome<T> -> Async<T>
+val outcome = async.toOutcome()  // Async<T> -> Outcome<T>? (null if Loading/Uninitialized)
 ```
 
 ## Scope
@@ -91,11 +108,52 @@ val scope = coroScope(
 scope.go { doWork() }                          // Job
 scope.goAsync { computeValue() }               // Deferred<T>
 scope.goSafe(onError = { log(it) }) { risky() } // Job, catches exceptions
-scope.goLoad { fetchData() }                   // Async<T>
+scope.goLoad { fetchData() }                   // Async<T> state container
 
 // Cleanup
 scope.cancel()
 scope.cancel("Shutting down")
+```
+
+## Context Switching
+
+Switch between sync/async dispatchers (useful for Minecraft main thread, IO operations).
+
+```kotlin
+// Configure dispatchers (optional, has sensible defaults)
+CoroDispatchers.configure(
+    sync = Dispatchers.Default,  // for CPU-bound work
+    async = Dispatchers.IO       // for IO operations
+)
+
+// Switch to sync dispatcher (e.g., Minecraft main thread)
+sync {
+    player.teleport(location)
+    world.setBlock(pos, block)
+}
+
+// Switch to async dispatcher (e.g., database, file IO)
+async {
+    val data = database.query("SELECT * FROM users")
+    file.writeText(data)
+}
+
+// Use specific dispatchers
+default {
+    heavyComputation()  // Dispatchers.Default
+}
+
+io {
+    httpClient.get(url)  // Dispatchers.IO
+}
+
+// Combine them
+val result = async {
+    val data = fetchFromDatabase()
+    sync {
+        updateUI(data)  // back to main thread
+    }
+}
 ```
 
 ## Retry
@@ -203,9 +261,20 @@ Safe collection and error handling for flows.
 ```kotlin
 // Safe mapping (wraps in Outcome)
 flowOf(1, 2, 3)
-    .mapSafe { riskyTransform(it) }  // Flow<Outcome<T>>
-    .filterSuccessful()               // Flow<T> (only successes)
+    .mapSafe { riskyTransform(it) }       // Flow<Outcome<T>> - same type
+    .filterSuccessful()                    // Flow<T> (only successes)
     .collect { println(it) }
+
+// Safe mapping with type transformation
+flowOf(1, 2, 3)
+    .mapToOutcome { "value: $it" }        // Flow<Outcome<String>> - different type
+    .filterSuccessful()
+    .collect { println(it) }
+
+// Extract only failures
+flowOf(outcomes)
+    .filterFailed()                        // Flow<Throwable>
+    .collect { logError(it) }
 
 // Safe collection with error handling
 eventFlow()
@@ -227,8 +296,12 @@ flow { emit(api.fetch()) }
     .retryExponential(times = 3, initialDelay = 100.milliseconds)
     .collect { }
 
-// Throttle emissions
+// Rate limiting
 sensorFlow()
     .throttle(100.milliseconds)  // max 10 emissions per second
     .collect { }
+
+textChanges
+    .debounce(300.milliseconds)  // wait for 300ms of silence
+    .collect { search(it) }
 ```
