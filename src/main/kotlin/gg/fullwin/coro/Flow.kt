@@ -7,15 +7,37 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlin.time.Duration
 
+/**
+ * Like Flow.map, but wraps each transformation in [safe], so exceptions become Outcome.Failure
+ * instead of canceling the flow. Use with [filterSuccessful] to skip failures and continue.
+ */
 fun <T> Flow<T>.mapSafe(transform: suspend (T) -> T): Flow<Outcome<T>> = map { value ->
     safe { transform(value) }
 }
 
+/**
+ * Like [mapSafe] but for type-changing transformations.
+ */
 fun <T, R> Flow<T>.mapToOutcome(transform: suspend (T) -> R): Flow<Outcome<R>> = map { value ->
     safe { transform(value) }
 }
 
 
+/**
+ * Catches exceptions during flow collection and provides error/completion hooks.
+ *
+ * Unlike Flow.catch, this catches exceptions in the collector lambda itself,
+ * not just upstream errors. Useful for processing flows where each item might fail.
+ *
+ * ```kotlin
+ * eventFlow()
+ *     .collectSafe { event ->
+ *         riskyProcessing(event)  // exceptions caught per-item
+ *     }
+ *     .onError { logger.warn("Item failed", it) }
+ *     .launchIn(scope)
+ * ```
+ */
 class SafeCollector<T>(
     private val flow: Flow<T>,
     private val collector: suspend (T) -> Unit
@@ -113,8 +135,10 @@ fun <T> Flow<T>.throttle(
 @OptIn(FlowPreview::class)
 fun <T> Flow<T>.debounce(duration: Duration): Flow<T> = debounce(duration.inWholeMilliseconds)
 
+/** Unwraps successful outcomes. Pair with [mapSafe] to handle errors per-item. */
 fun <T> Flow<Outcome<T>>.filterSuccessful(): Flow<T> = mapNotNull { it.getOrNull() }
 
+/** Extracts only errors from a Flow<Outcome<T>>. Useful for logging failures. */
 fun <T> Flow<Outcome<T>>.filterFailed(): Flow<Throwable> = mapNotNull {
     (it as? Outcome.Failure)?.error
 }

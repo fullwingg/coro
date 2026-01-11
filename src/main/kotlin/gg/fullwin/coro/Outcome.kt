@@ -4,6 +4,18 @@ import kotlin.contracts.ExperimentalContracts
 import kotlin.contracts.InvocationKind
 import kotlin.contracts.contract
 
+/**
+ * Railway-oriented error handling - represents operations that can succeed or fail.
+ *
+ * Unlike try/catch, failures become values you can transform and chain.
+ * All transformation methods automatically catch exceptions.
+ *
+ * ```kotlin
+ * safe { api.fetchUser(id) }
+ *     .map { it.name.uppercase() }  // if this throws, becomes Failure
+ *     .recover { "Anonymous" }      // handle errors in the chain
+ * ```
+ */
 sealed class Outcome<out T> {
     data class Success<T>(val value: T) : Outcome<T>()
     data class Failure(val error: Throwable) : Outcome<Nothing>()
@@ -11,11 +23,19 @@ sealed class Outcome<out T> {
     val isSuccess: Boolean get() = this is Success
     val isFailure: Boolean get() = this is Failure
 
+    /**
+     * Transforms success values. Exceptions in [transform] automatically become Failure.
+     * This is the key difference from standard map - no need to wrap in try/catch.
+     */
     inline fun <R> map(transform: (T) -> R): Outcome<R> = when (this) {
         is Success -> safe { transform(value) }
         is Failure -> this
     }
 
+    /**
+     * Like [map], but for transformations that themselves return Outcome.
+     * Use this to chain operations that can fail: `outcome.flatMap { validateUser(it) }`
+     */
     inline fun <R> flatMap(transform: (T) -> Outcome<R>): Outcome<R> = when (this) {
         is Success -> try {
             transform(value)
@@ -25,6 +45,10 @@ sealed class Outcome<out T> {
         is Failure -> this
     }
 
+    /**
+     * Converts failures back to success by providing a fallback value.
+     * The recovery function can also throw, which will be wrapped in Failure.
+     */
     inline fun recover(transform: (Throwable) -> @UnsafeVariance T): Outcome<T> = when (this) {
         is Success -> this
         is Failure -> safe { transform(error) }
@@ -61,6 +85,15 @@ sealed class Outcome<out T> {
     }
 }
 
+/**
+ * Entry point for railway-oriented error handling. Wraps any code that might throw.
+ *
+ * ```kotlin
+ * safe { api.fetchUser(id) }      // Returns Outcome instead of throwing
+ *     .map { it.name }
+ *     .getOrElse { "Unknown" }
+ * ```
+ */
 @OptIn(ExperimentalContracts::class)
 inline fun <T> safe(block: () -> T): Outcome<T> {
     contract { callsInPlace(block, InvocationKind.AT_MOST_ONCE) }
@@ -71,6 +104,7 @@ inline fun <T> safe(block: () -> T): Outcome<T> {
     }
 }
 
+/** Suspending version of [safe]. */
 @OptIn(ExperimentalContracts::class)
 suspend inline fun <T> safeSuspend(block: suspend () -> T): Outcome<T> {
     contract { callsInPlace(block, InvocationKind.AT_MOST_ONCE) }
@@ -81,6 +115,14 @@ suspend inline fun <T> safeSuspend(block: suspend () -> T): Outcome<T> {
     }
 }
 
+/**
+ * Tries a fallback operation if this one failed. Useful for primary/backup service patterns.
+ *
+ * ```kotlin
+ * safe { primaryApi.fetch() }
+ *     .orElse { safe { backupApi.fetch() } }
+ * ```
+ */
 inline fun <T> Outcome<T>.orElse(alternative: () -> Outcome<T>): Outcome<T> = when (this) {
     is Outcome.Success -> this
     is Outcome.Failure -> alternative()

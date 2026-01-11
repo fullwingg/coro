@@ -1,5 +1,21 @@
 package gg.fullwin.coro
 
+/**
+ * State container for async operations - tracks Uninitialized → Loading → Success/Failure.
+ *
+ * Unlike [Outcome] which only has Success/Failure, this adds Loading state for showing
+ * progress indicators in UIs or command feedback.
+ *
+ * ```kotlin
+ * val userState = load { fetchUser(id) }
+ * userState.fold(
+ *     onUninitialized = { "Not loaded yet" },
+ *     onLoading = { "Fetching..." },
+ *     onSuccess = { "Found: ${it.name}" },
+ *     onFailure = { "Error: ${it.message}" }
+ * )
+ * ```
+ */
 sealed class Async<out T> {
     data object Uninitialized : Async<Nothing>()
     data object Loading : Async<Nothing>()
@@ -27,6 +43,10 @@ sealed class Async<out T> {
         else -> null
     }
 
+    /**
+     * Unlike Outcome.map, this preserves Loading/Uninitialized states.
+     * The transform doesn't run until there's a Success value.
+     */
     inline fun <R> map(transform: (T) -> R): Async<R> = when (this) {
         is Uninitialized -> Uninitialized
         is Loading -> Loading
@@ -49,6 +69,10 @@ sealed class Async<out T> {
         return this
     }
 
+    /**
+     * Pattern match all four states. Useful for rendering UI or command responses
+     * that need different messages for each state.
+     */
     inline fun <R> fold(
         onUninitialized: () -> R,
         onLoading: () -> R,
@@ -69,6 +93,7 @@ sealed class Async<out T> {
     }
 }
 
+/** Like [safe] but returns [Async] instead of [Outcome]. Immediately executes and returns Success/Failure. */
 suspend fun <T> load(block: suspend () -> T): Async<T> {
     return try {
         Async.Success(block())
@@ -82,6 +107,7 @@ fun <T> Outcome<T>.toAsync(): Async<T> = when (this) {
     is Outcome.Failure -> Async.Failure(error)
 }
 
+/** Returns null for Loading/Uninitialized since they don't have a final result yet. */
 fun <T> Async<T>.toOutcome(): Outcome<T>? = when (this) {
     is Async.Success -> Outcome.Success(value)
     is Async.Failure -> Outcome.Failure(error)

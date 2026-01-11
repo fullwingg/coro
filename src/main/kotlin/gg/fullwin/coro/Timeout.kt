@@ -4,6 +4,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout as ktxWithTimeout
 import kotlin.time.Duration
 
+/** Wraps kotlinx.coroutines.withTimeout to return Outcome instead of throwing. */
 suspend fun <T> withTimeout(duration: Duration, block: suspend () -> T): Outcome<T> {
     return try {
         Outcome.Success(ktxWithTimeout(duration) { block() })
@@ -14,6 +15,7 @@ suspend fun <T> withTimeout(duration: Duration, block: suspend () -> T): Outcome
     }
 }
 
+/** Alias for kotlinx.coroutines.withTimeoutOrNull. */
 suspend fun <T> withTimeoutOrNull(duration: Duration, block: suspend () -> T): T? {
     return kotlinx.coroutines.withTimeoutOrNull(duration) { block() }
 }
@@ -28,6 +30,10 @@ suspend fun <T> withTimeoutOrElse(
 
 class TimeoutException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
+/**
+ * Like kotlinx.coroutines.withTimeout, but throws a custom TimeoutException instead of
+ * TimeoutCancellationException. Useful when you want a clearer exception type.
+ */
 suspend fun <T> withTimeoutOrThrow(
     duration: Duration,
     message: String = "Operation timed out after $duration",

@@ -4,6 +4,22 @@ import kotlinx.coroutines.delay
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
+/**
+ * Retries an operation up to [times] attempts with optional exponential backoff.
+ *
+ * Use [predicate] to only retry specific exceptions (e.g., network errors but not validation errors).
+ *
+ * ```kotlin
+ * retry(times = 3, delay = 1.seconds, exponential = true) {
+ *     unreliableApi.fetch()
+ * }
+ *
+ * // Only retry network errors
+ * retry(predicate = { it is IOException }) {
+ *     api.fetch()
+ * }
+ * ```
+ */
 suspend fun <T> retry(
     times: Int = 3,
     delay: Duration = 1.seconds,
@@ -34,6 +50,7 @@ suspend fun <T> retry(
     return Outcome.Failure(lastError ?: IllegalStateException("Retry failed with no error"))
 }
 
+/** Like [retry], but throws the last error instead of returning Outcome.Failure. */
 suspend fun <T> retryOrThrow(
     times: Int = 3,
     delay: Duration = 1.seconds,
@@ -63,6 +80,18 @@ class RetryBuilder<T> {
     }
 }
 
+/**
+ * DSL alternative to the function-based retry. Same functionality, different syntax.
+ *
+ * ```kotlin
+ * retry<User> {
+ *     times = 5
+ *     exponential = true
+ *     retryIf { it is NetworkException }
+ *     attempt { api.fetchUser() }
+ * }
+ * ```
+ */
 suspend fun <T> retry(builder: RetryBuilder<T>.() -> Unit): Outcome<T> {
     return RetryBuilder<T>().apply(builder).execute()
 }
