@@ -8,7 +8,7 @@ repositories {
 }
 
 dependencies {
-    implementation("gg.fullwin:coro:1.0.1")
+    implementation("gg.fullwin:coro:1.0.2")
 }
 ```
 
