@@ -75,10 +75,23 @@ CoroDispatchers.configure(
     async = Dispatchers.IO
 )
 
-// Common pattern: fetch in background, update world on main thread
-scope.go {
-    val playerData = async { database.fetchPlayer(uuid) }  // background
-    sync { player.teleport(playerData.lastLocation) }      // main thread
+// Two ways to use sync/async:
+
+// 1. Fire-and-forget launchers (call from anywhere, even non-suspend functions)
+@EventHandler
+fun onJoin(event: PlayerJoinEvent) {
+    scope.async {  // Launches on background thread
+        val data = database.fetchPlayer(event.player.uuid)
+        scope.sync {  // Switches back to main thread
+            applyData(event.player, data)
+        }
+    }
+}
+
+// 2. Context switchers (inside suspend functions)
+suspend fun teleportPlayer() {
+    val location = async { database.getLastLocation(uuid) }  // suspend & switch
+    sync { player.teleport(location) }  // suspend & switch back
 }
 ```
 
@@ -86,6 +99,19 @@ scope.go {
 - Centralized dispatcher config (one place to change for your whole plugin)
 - Shorter, clearer code
 - Easier to grep for main thread operations
+
+**Quick Reference - Context Switching:**
+```kotlin
+// Launchers (call from anywhere):
+scope.async { }   // Launch on background (I/O)
+scope.sync { }    // Launch on main thread
+scope.go { }      // Launch on Default (CPU work)
+
+// Context switchers (inside suspend functions):
+async { }         // Switch to background (I/O)
+sync { }          // Switch to main thread
+default { }       // Switch to Default (CPU work)
+```
 
 ## Scope - SupervisorJob Built-in
 
@@ -222,13 +248,40 @@ command("whois") { args ->
 
 **Background task with main thread updates:**
 ```kotlin
-scope.go {
-    val results = async {
-        database.queryTopPlayers(limit = 10)
+// From a regular function (fire-and-forget launcher):
+fun refreshLeaderboard() {
+    scope.async {
+        val results = database.queryTopPlayers(10)
+        scope.sync {
+            scoreboard.update(results)  // back to main thread
+        }
     }
+}
 
-    sync {
-        scoreboard.update(results)  // must be on main thread
+// From a suspend function (context switchers):
+suspend fun teleportPlayer() {
+    val location = async { database.getLastLocation(uuid) }  // I/O work
+    sync { player.teleport(location) }  // back to main thread
+}
+
+// CPU-intensive work:
+suspend fun generateTerrain(region: Region) {
+    val blocks = default {
+        complexTerrainAlgorithm(region)  // Heavy calculation
+    }
+    sync { region.setBlocks(blocks) }  // Apply to world on main thread
+}
+
+// In an event handler:
+@EventHandler
+fun onPlayerMove(event: PlayerMoveEvent) {
+    scope.async {
+        val region = database.getRegion(event.to)
+        scope.sync {
+            if (!region.canEnter(event.player)) {
+                event.isCancelled = true
+            }
+        }
     }
 }
 ```
