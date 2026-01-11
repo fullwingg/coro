@@ -1,6 +1,6 @@
 # Coro
 
-Kotlin coroutine utilities for cleaner async code.
+Kotlin coroutine utilities designed for Minecraft plugins, Discord bots, and game servers.
 
 ```kotlin
 repositories {
@@ -8,300 +8,227 @@ repositories {
 }
 
 dependencies {
-    implementation("gg.fullwin:coro:1.0.0")
+    implementation("gg.fullwin:coro:1.0.1")
 }
 ```
 
-## Outcome
+## Quick Guide
 
-Railway-oriented error handling without try/catch.
+| Feature | Use When |
+|---------|----------|
+| **Outcome** | You want to chain operations that might fail without try/catch |
+| **Async** | You need loading states for UI/commands (Uninitialized → Loading → Success/Failure) |
+| **sync/async** | You need to switch between main thread and background (Minecraft world ops) |
+| **Scope** | You want automatic error handling and easy cleanup for coroutines |
+| **retry** | Calling unreliable APIs (network, external services) |
+| **debounce** | Handling rapid user input (search-as-you-type) |
+| **throttle** | Rate-limiting frequent events (position updates, scroll) |
+
+## Outcome - Railway Error Handling
+
+**Problem:** Try/catch blocks break the flow. Nested error handling gets messy.
+
+**Solution:** Errors become values you can transform and chain.
 
 ```kotlin
-// Wrap risky operations
-val result = safe { api.fetchUser(id) }
+// The key insight: map/flatMap automatically catch exceptions
+val username = safe { api.fetchUser(id) }
+    .map { it.name.uppercase() }      // if this throws, becomes Failure
+    .recover { "Anonymous" }           // only runs on Failure
+    .getOrElse { "Guest" }
 
-// Chain transformations
-val name = safe { api.fetchUser(id) }
-    .map { it.name.uppercase() }
-    .flatMap { safe { validate(it) } }
-    .recover { "Anonymous" }
-    .onSuccess { log("Got: $it") }
-    .onError { log("Failed: ${it.message}") }
-
-// Extract values
-result.getOrNull()           // T?
-result.getOrElse { default } // T
-result.getOrThrow()          // T or throws
-
-// Suspending version
-val data = safeSuspend { fetchFromApi() }
-
-// Fallback to alternative
-val user = safe { primaryApi.fetch() }
-    .orElse { safe { backupApi.fetch() } }
+// Primary/backup pattern
+val data = safe { primaryApi.fetch() }
+    .orElse { safe { backupApi.fetch() } }  // tries backup if primary fails
 ```
 
-## Async
+**Outcome vs Async:** Use Outcome when you only care about Success/Failure. Use Async when you need Loading states for UI feedback.
 
-State container for async operations (useful for UI state).
+## Async - Loading State Container
+
+**Problem:** Need to show loading spinners, handle uninitialized state, and distinguish between "not loaded yet" and "loaded but failed".
+
+**Solution:** Four states that match your UI needs.
 
 ```kotlin
-sealed class Async<out T> {
-    object Uninitialized
-    object Loading
-    data class Success<T>(val value: T)
-    data class Failure(val error: Throwable)
-}
+val userState = load { database.fetchUser(uuid) }
 
-// Load data
-val state: Async<User> = load { repository.getUser(id) }
-
-// Handle states
-state.fold(
-    onUninitialized = { showEmpty() },
-    onLoading = { showSpinner() },
-    onSuccess = { showUser(it) },
-    onFailure = { showError(it) }
+// Pattern match all states
+userState.fold(
+    onUninitialized = { sender.msg("Use /load to fetch data") },
+    onLoading = { sender.msg("Loading...") },
+    onSuccess = { sender.msg("Player: ${it.name}") },
+    onFailure = { sender.msg("Error: ${it.message}") }
 )
-
-// Or use callbacks
-state
-    .onLoading { showSpinner() }
-    .onSuccess { showUser(it) }
-    .onFailure { showError(it) }
-
-// Check state
-if (state.isLoading) { }
-if (state.isSuccess) { }
-if (state.isFailure) { }
-if (state.isComplete) { }  // Success or Failure
-
-// Transform and extract
-state.map { it.name }
-state.getOrNull()            // T?
-state.getOrElse { defaultUser }
-state.errorOrNull()          // Throwable? (only for Failure)
-
-// Factory methods
-Async.success(user)
-Async.failure(error)
-Async.loading()
-Async.uninitialized()
-
-// Conversions
-val async = outcome.toAsync()    // Outcome<T> -> Async<T>
-val outcome = async.toOutcome()  // Async<T> -> Outcome<T>? (null if Loading/Uninitialized)
 ```
 
-## Scope
+## Context Switching - Main Thread Safety
 
-Managed coroutine scope with error handling.
+**Problem:** Minecraft/game servers require certain operations on the main thread. Blocking the main thread freezes the server.
 
-```kotlin
-// Create a scope
-val scope = coroScope(
-    dispatcher = Dispatchers.IO,
-    onError = { e -> logger.error("Uncaught", e) }
-)
-
-// Launch coroutines
-scope.go { doWork() }                          // Job
-scope.goAsync { computeValue() }               // Deferred<T>
-scope.goSafe(onError = { log(it) }) { risky() } // Job, catches exceptions
-scope.goLoad { fetchData() }                   // Async<T> state container
-
-// Cleanup
-scope.cancel()
-scope.cancel("Shutting down")
-```
-
-## Context Switching
-
-Switch between sync/async dispatchers (useful for Minecraft main thread, IO operations).
+**Solution:** Easy switching between sync (main thread) and async (background).
 
 ```kotlin
-// Configure dispatchers (optional, has sensible defaults)
+// One-time setup for your plugin
 CoroDispatchers.configure(
-    sync = Dispatchers.Default,  // for CPU-bound work
-    async = Dispatchers.IO       // for IO operations
+    sync = MinecraftDispatcher,  // your main thread dispatcher
+    async = Dispatchers.IO
 )
 
-// Switch to sync dispatcher (e.g., Minecraft main thread)
-sync {
-    player.teleport(location)
-    world.setBlock(pos, block)
-}
-
-// Switch to async dispatcher (e.g., database, file IO)
-async {
-    val data = database.query("SELECT * FROM users")
-    file.writeText(data)
-}
-
-// Use specific dispatchers
-default {
-    heavyComputation()  // Dispatchers.Default
-}
-
-io {
-    httpClient.get(url)  // Dispatchers.IO
-}
-
-// Combine them
-val result = async {
-    val data = fetchFromDatabase()
-    sync {
-        updateUI(data)  // back to main thread
-    }
+// Common pattern: fetch in background, update world on main thread
+scope.go {
+    val playerData = async { database.fetchPlayer(uuid) }  // background
+    sync { player.teleport(playerData.lastLocation) }      // main thread
 }
 ```
 
-## Retry
+**Why not use `withContext` directly?** You could, but `sync/async` gives you:
+- Centralized dispatcher config (one place to change for your whole plugin)
+- Shorter, clearer code
+- Easier to grep for main thread operations
 
-Retry failed operations with backoff.
+## Scope - SupervisorJob Built-in
+
+**Problem:** By default, one coroutine failure cancels all siblings. You want isolated failures.
+
+**Solution:** `coroScope` uses SupervisorJob internally.
 
 ```kotlin
-// Basic retry
-val result = retry(times = 3, delay = 1.seconds) {
-    unreliableApi.fetch()
+val scope = coroScope(onError = { logger.error("Failed", it) })
+
+scope.go { taskA() }  // If this crashes...
+scope.go { taskB() }  // ...this keeps running
+scope.go { taskC() }  // ...and so does this
+
+// Clean shutdown
+onDisable { scope.cancel() }
+```
+
+## Retry - Smart Backoff
+
+**When:** Calling external APIs, databases, or any service that might be temporarily unavailable.
+
+```kotlin
+// Exponential backoff for network calls
+retry(times = 5, delay = 100.milliseconds, exponential = true) {
+    mojangApi.fetchProfile(uuid)
 }
 
-// Exponential backoff
-val result = retry(
-    times = 5,
-    delay = 100.milliseconds,
-    exponential = true
-) {
-    api.fetch()
-}
-
-// Retry only specific exceptions
-val result = retry(
-    times = 3,
-    delay = 1.seconds,
-    predicate = { it is IOException }
-) {
-    api.fetch()
-}
-
-// Throw on failure instead of returning Outcome
-val value = retryOrThrow(times = 3, delay = 1.seconds) {
-    api.fetch()
-}
-
-// DSL builder
-val result = retry<User> {
-    times = 3
-    delay = 500.milliseconds
-    exponential = true
-    retryIf { it is NetworkException }
-    attempt { api.fetchUser() }
+// Only retry specific errors (don't retry validation errors!)
+retry(predicate = { it is IOException || it is SocketTimeoutException }) {
+    externalApi.fetch()
 }
 ```
 
 ## Timeout
 
-Timeout operations with various return types.
-
 ```kotlin
-// Returns Outcome
-val result = withTimeout(5.seconds) { slowOperation() }
+// Returns Outcome (composable with other Outcome operations)
+withTimeout(5.seconds) { longQuery() }
+    .recover { cachedData }
 
-// Returns nullable
-val value = withTimeoutOrNull(5.seconds) { slowOperation() }
-
-// Returns default on timeout
-val value = withTimeoutOrElse(5.seconds, default = { fallback }) {
-    slowOperation()
-}
-
-// Throws TimeoutException
-val value = withTimeoutOrThrow(5.seconds, message = "Too slow") {
-    slowOperation()
+// Quick timeout with fallback
+val data = withTimeoutOrElse(2.seconds, default = { emptyList() }) {
+    fetchRecentPlayers()
 }
 ```
 
-## Debounce & Throttle
+## Debounce & Throttle - Rate Limiting
 
-Rate-limit function calls.
+**Understanding the difference:**
+
+| Function | Behavior | Use Case |
+|----------|----------|----------|
+| **debounce** | Waits for silence, cancels previous calls | Search-as-you-type (only search after user stops typing) |
+| **throttle** | Executes first call, drops rest | Rate-limiting analytics events |
+| **throttleLatest** | Executes first, queues latest | Position sync (immediate feedback + final state) |
 
 ```kotlin
 val scope = coroScope()
 
-// Debounce: collapses rapid calls, executes after quiet period
-val saveSearch = scope.debounce<String>(300.milliseconds) { query ->
+// Debounce: search after user stops typing
+val search = scope.debounce<String>(300.milliseconds) { query ->
     api.search(query)
 }
-saveSearch("h")
-saveSearch("he")
-saveSearch("hello") // Only this one executes (after 300ms)
+search("h")     // Canceled
+search("he")    // Canceled
+search("hello") // Executes after 300ms of silence
 
-// Throttle: executes immediately, ignores calls within interval
-val trackClick = scope.throttle<String>(1.seconds) { button ->
-    analytics.track(button)
+// ThrottleLatest: position updates (want both immediate + final)
+val syncPos = scope.throttleLatest<Location>(100.milliseconds) { loc ->
+    database.updatePosition(player, loc)
 }
-trackClick("buy") // Executes
-trackClick("buy") // Ignored (within 1s)
-trackClick("buy") // Ignored
-
-// ThrottleLatest: like throttle, but queues the last call
-val updatePosition = scope.throttleLatest<Position>(100.milliseconds) { pos ->
-    sendToServer(pos)
-}
-updatePosition(pos1) // Executes immediately
-updatePosition(pos2) // Queued
-updatePosition(pos3) // Replaces pos2 in queue
-// After 100ms, pos3 executes
+// Rapid movement: saves immediately, then saves final position after movement stops
 ```
 
 ## Flow Extensions
 
-Safe collection and error handling for flows.
+**Key insight:** `collectSafe` catches exceptions in the collector itself (not just upstream), so one failing item doesn't cancel the whole flow.
 
 ```kotlin
-// Safe mapping (wraps in Outcome)
-flowOf(1, 2, 3)
-    .mapSafe { riskyTransform(it) }       // Flow<Outcome<T>> - same type
-    .filterSuccessful()                    // Flow<T> (only successes)
-    .collect { println(it) }
-
-// Safe mapping with type transformation
-flowOf(1, 2, 3)
-    .mapToOutcome { "value: $it" }        // Flow<Outcome<String>> - different type
-    .filterSuccessful()
-    .collect { println(it) }
-
-// Extract only failures
-flowOf(outcomes)
-    .filterFailed()                        // Flow<Throwable>
-    .collect { logError(it) }
-
-// Safe collection with error handling
-eventFlow()
+// Process events where each might fail
+eventBus.events
     .collectSafe { event ->
-        process(event) // exceptions caught per-item
+        handleEvent(event)  // if this throws, logs error and continues
     }
-    .onError { e -> log("Processing failed", e) }
-    .onComplete { log("Done") }
+    .onError { logger.warn("Event failed", it) }
     .launchIn(scope)
 
-// Error recovery
-flow { emit(fetchData()) }
-    .onErrorReturn(defaultValue)     // emit fallback on error
-    .onErrorResume(backupFlow)       // switch to fallback flow
+// Transform with error handling per-item
+playerJoinFlow
+    .mapSafe { fetchPlayerData(it.uuid) }  // some fetches might fail
+    .filterSuccessful()                     // skip failures, continue
+    .collect { data -> applyData(data) }
 
-// Retry
-flow { emit(api.fetch()) }
-    .retryWithDelay(times = 3, delay = 1.seconds)
-    .retryExponential(times = 3, initialDelay = 100.milliseconds)
-    .collect { }
+// Debounce for search
+chatInput
+    .debounce(300.milliseconds)
+    .collect { query -> performSearch(query) }
+```
 
-// Rate limiting
-sensorFlow()
-    .throttle(100.milliseconds)  // max 10 emissions per second
-    .collect { }
+## Common Patterns
 
-textChanges
-    .debounce(300.milliseconds)  // wait for 300ms of silence
-    .collect { search(it) }
+**Plugin initialization:**
+```kotlin
+class MyPlugin : JavaPlugin() {
+    private val scope = coroScope(onError = { logger.error("Coroutine failed", it) })
+
+    override fun onEnable() {
+        CoroDispatchers.configure(
+            sync = MinecraftDispatcher(this),
+            async = Dispatchers.IO
+        )
+    }
+
+    override fun onDisable() {
+        scope.cancel("Plugin disabling")
+    }
+}
+```
+
+**Command with loading feedback:**
+```kotlin
+command("whois") { args ->
+    val state = load { mojangApi.fetchProfile(args[0]) }
+
+    state.fold(
+        onUninitialized = { },  // shouldn't happen
+        onLoading = { sender.msg("Looking up player...") },
+        onSuccess = { sender.msg("Name: ${it.name}, UUID: ${it.uuid}") },
+        onFailure = { sender.msg("Player not found") }
+    )
+}
+```
+
+**Background task with main thread updates:**
+```kotlin
+scope.go {
+    val results = async {
+        database.queryTopPlayers(limit = 10)
+    }
+
+    sync {
+        scoreboard.update(results)  // must be on main thread
+    }
+}
 ```
