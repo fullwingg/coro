@@ -58,12 +58,11 @@ suspend fun <T> async(block: suspend () -> T): T {
     return withContext(CoroDispatchers.async) { block() }
 }
 
-/** Switches to [Dispatchers.Default] for CPU-intensive work. */
+/**
+ * Switches to [Dispatchers.Default] for CPU-intensive work.
+ *
+ * Use this for heavy calculations, not I/O. For I/O, use [async].
+ */
 suspend fun <T> default(block: suspend () -> T): T {
     return withContext(Dispatchers.Default) { block() }
-}
-
-/** Switches to [Dispatchers.IO] for file/network operations. */
-suspend fun <T> io(block: suspend () -> T): T {
-    return withContext(Dispatchers.IO) { block() }
 }

@@ -38,13 +38,6 @@ class ContextTest : FunSpec({
         }
     }
 
-    test("io uses IO dispatcher") {
-        runTest {
-            val result = io { "from IO" }
-            result shouldBe "from IO"
-        }
-    }
-
     test("CoroDispatchers.configure updates dispatchers") {
         val customSync = Dispatchers.Unconfined
         val customAsync = Dispatchers.Default

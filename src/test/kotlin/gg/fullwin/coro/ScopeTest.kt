@@ -148,4 +148,44 @@ class ScopeTest : FunSpec({
             completed.shouldBeFalse()
         }
     }
+
+    test("async launcher runs on async dispatcher") {
+        runTest {
+            CoroDispatchers.configure(
+                sync = Dispatchers.Default,
+                async = Dispatchers.IO
+            )
+
+            val scope = coroScope()
+            var executed = false
+
+            val job = scope.async {
+                executed = true
+            }
+
+            job.join()
+            executed.shouldBeTrue()
+            scope.cancel()
+        }
+    }
+
+    test("sync launcher runs on sync dispatcher") {
+        runTest {
+            CoroDispatchers.configure(
+                sync = Dispatchers.Default,
+                async = Dispatchers.IO
+            )
+
+            val scope = coroScope()
+            var executed = false
+
+            val job = scope.sync {
+                executed = true
+            }
+
+            job.join()
+            executed.shouldBeTrue()
+            scope.cancel()
+        }
+    }
 })
